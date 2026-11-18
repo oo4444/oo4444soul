@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>L'Anneau Brisé — Un hommage à Elden Ring</title>
+<link rel="stylesheet" href="style.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='none' stroke='%23c9a227' stroke-width='2'/></svg>" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="vignette"></div>
+<div id="damage-flash"></div>
+<div id="heal-flash"></div>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="bars">
+    <div class="bar hp-bar"><div id="hp-fill"></div><span id="hp-text"></span></div>
+    <div class="bar fp-bar"><div id="fp-fill"></div></div>
+    <div class="bar st-bar"><div id="st-fill"></div></div>
+    <div id="consumables">
+      <div id="estus"><span class="flask">🧪</span><span id="estus-count">3</span></div>
+      <div id="runes-display"><span class="rune-icon">✦</span><span id="rune-count">0</span></div>
+    </div>
+  </div>
+  <div id="boss-bar" class="hidden">
+    <div id="boss-name">SENTINELLE DÉCHUE DE L'ANNEAU</div>
+    <div class="bar boss-hp"><div id="boss-hp-fill"></div></div>
+  </div>
+  <div id="lockon" class="hidden"></div>
+  <div id="prompt" class="hidden"></div>
+  <div id="subtitle"></div>
+</div>
+
+<!-- Écran titre -->
+<div id="title-screen">
+  <h1>L'ANNEAU BRISÉ</h1>
+  <p class="tagline">Lève-toi, Sans-Tache, et que la grâce te guide.</p>
+  <button id="start-btn">Commencer</button>
+  <div id="controls-help">
+    <span>ZQSD / WASD — Se déplacer</span>
+    <span>Souris — Caméra</span>
+    <span>Clic gauche — Attaque</span>
+    <span>Maj — Courir</span>
+    <span>Espace — Esquive</span>
+    <span>Q (clic molette) — Cibler</span>
+    <span>F — Fiole de grâce</span>
+    <span>E — Interagir</span>
+  </div>
+</div>
+
+<div id="death-screen" class="fullscreen-msg hidden"><span>TU ES MORT</span></div>
+<div id="victory-screen" class="fullscreen-msg hidden"><span>GRAND ENNEMI TERRASSÉ</span></div>
+<div id="kill-toast" class="hidden">Ennemi terrassé</div>
+<div id="loading"><div class="rune-spin">✦</div><p>Chargement des terres intermédiaires…</p></div>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>
