@@ -5,7 +5,16 @@ ambiance sombre, endurance limitée, esquives avec frames d'invincibilité,
 feux de camp, runes, et un boss à terrasser. **100 % procédural** — aucun
 asset externe, tout (meshes, lumières, sons) est généré par le code.
 
-## Lancer le jeu
+## Jouer en ligne
+
+- Direct : https://raw.githack.com/oo4444/oo4444soul/main/index.html
+- GitHub Pages (si activé) : https://oo4444.github.io/oo4444soul/
+
+Le déploiement est **automatique** : un workflow GitHub Actions
+(`.github/workflows/deploy.yml`) publie le jeu sur GitHub Pages à chaque
+push sur `main`.
+
+## Lancer en local
 
 Le jeu est une page web (Three.js chargé via CDN). Il faut servir les
 fichiers avec un petit serveur local (obligatoire pour les modules ES) :
