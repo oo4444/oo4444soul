@@ -67,6 +67,21 @@ const Sound = {
   heal() { this.tone(520, 0.5, 'sine', 0.16, 780); },
   death() { this.tone(110, 1.6, 'sine', 0.25, 45); this.noise(1.2, 0.1, 160, 0.4); },
   bonfire() { this.tone(340, 0.9, 'sine', 0.14, 510); this.tone(510, 0.9, 'sine', 0.1, 680); },
+  startWind() {
+    if (!this.ctx || this._wind) return;
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer();
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 240;
+    const g = ctx.createGain();
+    g.gain.value = 0.018;
+    src.connect(f).connect(g).connect(ctx.destination);
+    src.start();
+    this._wind = g;
+  },
+  setWindLevel(v) { if (this._wind) this._wind.gain.value = v; },
   bossRoar() { this.tone(70, 1.4, 'sawtooth', 0.3, 40); this.noise(1.0, 0.25, 130, 0.6); },
   pickup() { this.tone(880, 0.18, 'sine', 0.12, 1180); },
 };
@@ -133,6 +148,26 @@ function particleTexture() {
 const WORLD_RADIUS = 290;
 const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.9, ...opts });
 
+/* ---------- relief : collines, crête du col, dunes de cendres ---------- */
+const DESERT_X = 96;
+function groundHeight(x, z) {
+  const d = Math.hypot(x, z);
+  let h = 0;
+  h += Math.sin(x * 0.02) * Math.cos(z * 0.03) * 1.1;
+  h += Math.sin(x * 0.11 + 2) * Math.sin(z * 0.09 + 1) * 0.35;
+  h *= clamp((d - 14) / 40, 0, 1);
+  const ridge = clamp(1 - Math.abs(x - 106) / 14, 0, 1);
+  h += ridge * ridge * 11 * clamp(Math.abs(z) / 16, 0, 1);
+  if (x > DESERT_X) {
+    const q = clamp((x - DESERT_X) / 40, 0, 1);
+    h = h * (1 - q * 0.6) + q * (
+      Math.sin(x * 0.05 + Math.cos(z * 0.045) * 2) * 1.3 +
+      Math.sin(z * 0.07 + 1.5) * 0.55
+    );
+  }
+  return h;
+}
+
 function mulberry(seed) {
   return function () {
     seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
@@ -151,16 +186,19 @@ function buildTerrain() {
   const cA = new THREE.Color(0x2c3624);
   const cB = new THREE.Color(0x1c2318);
   const cC = new THREE.Color(0x3a3a2e);
+  const cAsh1 = new THREE.Color(0x454150);
+  const cAsh2 = new THREE.Color(0x5a5664);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
     const d = Math.hypot(x, z);
-    let h = 0;
-    h += Math.sin(x * 0.02) * Math.cos(z * 0.03) * 1.1;
-    h += Math.sin(x * 0.11 + 2) * Math.sin(z * 0.09 + 1) * 0.35;
-    h *= clamp((d - 14) / 40, 0, 1);
-    pos.setY(i, h);
+    pos.setY(i, groundHeight(x, z));
     const t = 0.5 + 0.5 * Math.sin(x * 0.07) * Math.cos(z * 0.06);
     const col = cB.clone().lerp(cA, t).lerp(cC, clamp((d - 90) / 160, 0, 1) * 0.6);
+    const q = clamp((x - DESERT_X) / 26, 0, 1);
+    if (q > 0) {
+      const ash = cAsh1.clone().lerp(cAsh2, clamp(0.5 + 0.5 * Math.sin(x * 0.04 + Math.cos(z * 0.05) * 3), 0, 1));
+      col.lerp(ash, q);
+    }
     colors.push(col.r, col.g, col.b);
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
@@ -196,6 +234,196 @@ function buildErdtree() {
   scene.add(tree);
 }
 
+/* ---------- ciel : dôme dégradé, étoiles, lune ---------- */
+function buildSky() {
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: {
+      top: { value: new THREE.Color(0x05060c) },
+      horizon: { value: new THREE.Color(0x151824) },
+    },
+    vertexShader: `varying vec3 vP;
+      void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `varying vec3 vP; uniform vec3 top; uniform vec3 horizon;
+      void main(){
+        float h = clamp(normalize(vP).y, 0.0, 1.0);
+        vec3 c = mix(horizon, top, pow(h, 0.55));
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  });
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(430, 24, 16), skyMat));
+
+  const N = 520;
+  const posArr = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const a = Math.random() * TAU, e = Math.acos(Math.random() * 0.92);
+    posArr[i * 3] = Math.cos(a) * Math.sin(e) * 415;
+    posArr[i * 3 + 1] = Math.cos(e) * 415;
+    posArr[i * 3 + 2] = Math.sin(a) * Math.sin(e) * 415;
+  }
+  const sGeo = new THREE.BufferGeometry();
+  sGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+  scene.add(new THREE.Points(sGeo, new THREE.PointsMaterial({
+    size: 1.7, color: 0xcfd8ff, transparent: true, opacity: 0.7,
+    sizeAttenuation: false, fog: false, depthWrite: false,
+  })));
+
+  const moonSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture('rgba(205,218,255,0.9)'), blending: THREE.AdditiveBlending,
+    fog: false, depthWrite: false, transparent: true,
+  }));
+  moonSprite.scale.set(80, 80, 1);
+  moonSprite.position.set(160, 240, 110);
+  scene.add(moonSprite);
+}
+
+/* ---------- herbes hautes de la lande ---------- */
+function buildGrass() {
+  const N = 560;
+  const geo = new THREE.ConeGeometry(0.05, 0.5, 4);
+  geo.translate(0, 0.25, 0);
+  const m = new THREE.MeshStandardMaterial({ color: 0x3d4a28, roughness: 1 });
+  const inst = new THREE.InstancedMesh(geo, m, N);
+  const dummy = new THREE.Object3D();
+  let placed = 0, guard = 0;
+  while (placed < N && guard++ < 8000) {
+    const a = Math.random() * TAU, d = Math.sqrt(Math.random()) * 250;
+    const x = Math.cos(a) * d, z = Math.sin(a) * d;
+    if (x > DESERT_X - 14) continue;
+    dummy.position.set(x, groundHeight(x, z), z);
+    dummy.rotation.set((Math.random() - 0.5) * 0.35, Math.random() * TAU, (Math.random() - 0.5) * 0.35);
+    dummy.scale.setScalar(rand(0.6, 1.7));
+    dummy.updateMatrix();
+    inst.setMatrixAt(placed++, dummy.matrix);
+  }
+  inst.count = placed;
+  inst.receiveShadow = true;
+  scene.add(inst);
+}
+
+/* ---------- le Désert de Cendres ---------- */
+function deadTree(x, z, seedRng) {
+  const g = new THREE.Group();
+  const bark = mat(0x1c1a19, { roughness: 1 });
+  const h = rand(2.6, 4.2);
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.35, h, 6), bark);
+  trunk.position.y = h / 2;
+  g.add(trunk);
+  for (let i = 0; i < 4; i++) {
+    const len = rand(0.8, 1.8);
+    const side = i % 2 ? 1 : -1;
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.1, len, 5), bark);
+    const rz = rand(0.5, 1.2) * side;
+    b.position.y = rand(1.5, h);
+    b.position.x = Math.sin(rz) * len / 2 * side;
+    b.position.z = rand(-0.3, 0.3);
+    b.rotation.set(0, i * 1.7, rz);
+    g.add(b);
+  }
+  g.position.set(x, groundHeight(x, z), z);
+  g.rotation.y = seedRng * TAU;
+  g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  scene.add(g);
+}
+
+function buildDesert() {
+  const rng = mulberry(42);
+  const GATE_X = DESERT_X + 14;
+
+  /* porte de pierre au col du désert */
+  const p1 = pillar(8, 0.95, false);
+  p1.position.set(GATE_X, groundHeight(GATE_X, 4) - 0.4, 4);
+  const p2 = pillar(8, 0.95, false);
+  p2.position.set(GATE_X, groundHeight(GATE_X, -4) - 0.4, -4);
+  scene.add(p1, p2);
+
+  /* braseros du col */
+  for (const bz of [7, -7]) {
+    const bx = GATE_X;
+    const bh = groundHeight(bx, bz);
+    const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.2, 0.4, 8), mat(0x2c2a28));
+    bowl.position.set(bx, bh + 1.1, bz);
+    const fire = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.55, 6),
+      new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: 0.92 }));
+    fire.position.set(bx, bh + 1.55, bz);
+    const lit = new THREE.PointLight(0xff8c40, 30, 16, 1.8);
+    lit.position.set(bx, bh + 2, bz);
+    scene.add(bowl, fire, lit);
+    braziers.push({ fire, lit, phase: Math.random() * 9 });
+  }
+
+  /* arbres calcinés, ossements, lames plantées, craquements de braises */
+  for (let i = 0; i < 14; i++) {
+    deadTree(DESERT_X + 25 + rng() * 130, (rng() - 0.5) * 220, rng());
+  }
+  for (let i = 0; i < 10; i++) {
+    const x = DESERT_X + 30 + rng() * 110, z = (rng() - 0.5) * 200;
+    const bone = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, rand(0.7, 1.6), 3, 6), mat(0xcfc8b4, { roughness: 0.8 }));
+    bone.position.set(x, groundHeight(x, z) + 0.12, z);
+    bone.rotation.set(Math.PI / 2 + (rng() - 0.5) * 0.3, 0, rng() * TAU);
+    scene.add(bone);
+  }
+  for (let i = 0; i < 8; i++) {
+    const x = DESERT_X + 35 + rng() * 100, z = (rng() - 0.5) * 180;
+    const sword = new THREE.Mesh(new THREE.BoxGeometry(0.07, rand(1.2, 1.9), 0.16), mat(0x555a60, { metalness: 0.7, roughness: 0.5 }));
+    sword.position.set(x, groundHeight(x, z) + 0.55, z);
+    sword.rotation.z = (rng() - 0.5) * 0.35;
+    sword.castShadow = true;
+    scene.add(sword);
+  }
+  for (let i = 0; i < 26; i++) {
+    const x = DESERT_X + 30 + rng() * 110, z = (rng() - 0.5) * 200;
+    const crack = new THREE.Mesh(new THREE.PlaneGeometry(rand(1, 2.4), rand(0.3, 0.7)),
+      new THREE.MeshBasicMaterial({ color: 0xff5a1e, transparent: true, opacity: 0.8, side: THREE.DoubleSide }));
+    crack.rotation.x = -Math.PI / 2;
+    crack.rotation.z = rng() * TAU;
+    crack.position.set(x, groundHeight(x, z) + 0.06, z);
+    scene.add(crack);
+  }
+
+  /* l'Autel de l'Anneau brisé */
+  const AX = 216, AZ = 0;
+  const altar = new THREE.Mesh(
+    new THREE.TorusGeometry(6, 1.0, 10, 36, Math.PI),
+    new THREE.MeshStandardMaterial({ color: 0x4a463d, emissive: 0x603a12, emissiveIntensity: 0.55, roughness: 0.85 })
+  );
+  altar.position.set(AX, groundHeight(AX, AZ) + 0.4, AZ);
+  altar.rotation.y = Math.PI / 2;
+  altar.castShadow = true;
+  const altarLight = new THREE.PointLight(0xe6b422, 90, 44, 1.7);
+  altarLight.position.set(AX, groundHeight(AX, AZ) + 6, AZ);
+  const altarGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture('rgba(230,180,34,0.9)'), blending: THREE.AdditiveBlending,
+    depthWrite: false, transparent: true,
+  }));
+  altarGlow.scale.set(26, 26, 1);
+  altarGlow.position.copy(altarLight.position);
+  scene.add(altar, altarLight, altarGlow);
+}
+
+/* ---------- chute de cendres sur le désert ---------- */
+let ashFall, ashSeeds;
+function buildAsh() {
+  const N = 420;
+  const geo = new THREE.BufferGeometry();
+  const positions = new Float32Array(N * 3);
+  ashSeeds = [];
+  for (let i = 0; i < N; i++) {
+    positions[i * 3] = DESERT_X + Math.random() * 180;
+    positions[i * 3 + 1] = Math.random() * 12;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * 260;
+    ashSeeds.push(Math.random());
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+    map: particleTexture(), size: 0.3, transparent: true, opacity: 0.65,
+    blending: THREE.AdditiveBlending, depthWrite: false, color: 0x8e8798,
+  }));
+  pts.frustumCulled = false;
+  scene.add(pts);
+  ashFall = { pts, positions, N };
+}
+
 function pillar(h, r, broken) {
   const g = new THREE.Group();
   const stone = mat(0x4a463d, { roughness: 1 });
@@ -222,7 +450,7 @@ function buildRuins() {
     if (Math.hypot(x, z + 70) < 40 || Math.hypot(x, z - 18) < 12) continue;
     const broken = rng() > 0.55;
     const p = pillar(rand(3.5, 7), rand(0.4, 0.7), broken);
-    p.position.set(x, 0.5, z);
+    p.position.set(x, groundHeight(x, z), z);
     p.rotation.y = rng() * TAU;
     p.rotation.z = (rng() - 0.5) * (broken ? 0.22 : 0.03);
     scene.add(p);
@@ -231,7 +459,7 @@ function buildRuins() {
     const a = rng() * TAU, d = 20 + rng() * 240;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     const grave = new THREE.Mesh(new THREE.BoxGeometry(rand(0.5, 0.9), rand(0.8, 1.6), 0.16), mat(0x3c3a33));
-    grave.position.set(x, 0.4, z);
+    grave.position.set(x, groundHeight(x, z) + 0.2, z);
     grave.rotation.y = rng() * TAU;
     grave.rotation.z = (rng() - 0.5) * 0.3;
     grave.castShadow = true;
@@ -240,7 +468,7 @@ function buildRuins() {
   for (let i = 0; i < 30; i++) {
     const a = rng() * TAU, d = rng() * 260;
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(rand(0.5, 1.6), 0), mat(0x33352f));
-    rock.position.set(Math.cos(a) * d, rand(0, 0.6), Math.sin(a) * d);
+    rock.position.set(Math.cos(a) * d, groundHeight(Math.cos(a) * d, Math.sin(a) * d) + rand(0, 0.4), Math.sin(a) * d);
     rock.rotation.set(rng() * 3, rng() * 3, rng() * 3);
     rock.castShadow = true;
     scene.add(rock);
@@ -257,7 +485,8 @@ function buildBossArena() {
     for (const [gx, gz] of dirs) if (Math.cos(a) * gx + Math.sin(a) * gz > 0.8) isGap = true;
     if (isGap) continue;
     const p = pillar(rand(6, 9), 0.8, i % 3 === 0);
-    p.position.set(BOSS_POS.x + Math.cos(a) * 26, 0.5, BOSS_POS.z + Math.sin(a) * 26);
+    const px = BOSS_POS.x + Math.cos(a) * 26, pz = BOSS_POS.z + Math.sin(a) * 26;
+    p.position.set(px, groundHeight(px, pz) + 0.4, pz);
     scene.add(p);
   }
 }
@@ -334,7 +563,7 @@ function buildFireflies() {
 }
 
 /* ---------------- humanoïdes ---------------- */
-function makeHumanoid({ scale = 1, body = 0x3a3f4a, accent = 0x23262e, weaponLen = 1.0, eyeColor = 0xff4020 }) {
+function makeHumanoid({ scale = 1, body = 0x3a3f4a, accent = 0x23262e, weaponLen = 1.0, eyeColor = 0xff4020, wraith = false }) {
   const g = new THREE.Group();
   const bodyM = mat(body);
   const accentM = mat(accent);
@@ -373,10 +602,20 @@ function makeHumanoid({ scale = 1, body = 0x3a3f4a, accent = 0x23262e, weaponLen
   weaponGroup.rotation.x = 0.3;
   armR.add(weaponGroup);
 
-  g.add(torso, head, helm, eyeL, eyeR, armL, armR, legL, legR);
+  let robe = null, hood = null;
+  if (wraith) {
+    const robeM = mat(0x5b5763, { roughness: 0.95, transparent: true, opacity: 0.9 });
+    robe = new THREE.Mesh(new THREE.ConeGeometry(0.36, 1.2, 8, 1, true), robeM);
+    robe.position.y = 0.84;
+    hood = new THREE.Mesh(new THREE.ConeGeometry(0.23, 0.52, 7, 1, true), mat(accent));
+    hood.position.y = 1.8;
+    robe.castShadow = hood.castShadow = true;
+  }
+  if (wraith) g.add(torso, robe, hood, head, eyeL, eyeR, armL, armR);
+  else g.add(torso, head, helm, eyeL, eyeR, armL, armR, legL, legR);
   g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
   g.scale.setScalar(scale);
-  return { group: g, torso, head, armL, armR, legL, legR, weaponGroup };
+  return { group: g, torso, head, armL, armR, legL, legR, weaponGroup, wraith };
 }
 
 /* ---------------- état global ---------------- */
@@ -394,6 +633,10 @@ const enemies = [];
 const runeDrops = [];
 const shockwaves = [];
 const bursts = [];
+const braziers = [];
+let desertSeen = false;
+const fogGreen = new THREE.Color(0x0d1017);
+const fogAsh = new THREE.Color(0x1e1a26);
 let boss = null, bossEngaged = false, bossDefeated = false;
 let lockTarget = null;
 
@@ -431,13 +674,30 @@ function spawnBoss() {
   return boss;
 }
 
+function spawnWraith(x, z) {
+  const rig = makeHumanoid({
+    scale: 1.12, body: 0x5b5763, accent: 0x2f2b36, weaponLen: 0.9, eyeColor: 0xff8a4a, wraith: true,
+  });
+  scene.add(rig.group);
+  const e = {
+    rig, pos: new THREE.Vector3(x, 0, z), home: new THREE.Vector3(x, 0, z), yaw: rand(0, TAU),
+    hp: 120, maxHp: 120, state: 'guard', t: rand(0, 2),
+    speed: 5.2, dmg: 36, atkRange: 2.6, atkWindup: 0.6,
+    aggro: 18, runeValue: 220, isBoss: false, hitDone: false, walkPhase: rand(0, 9),
+    wraith: true, lungeDir: null,
+  };
+  rig.group.position.set(x, 0, z);
+  enemies.push(e);
+  return e;
+}
+
 function spawnShockwave(pos) {
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.6, 1.15, 40),
     new THREE.MeshBasicMaterial({ color: 0xffa02a, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false })
   );
   ring.rotation.x = -Math.PI / 2;
-  ring.position.copy(pos).setY(0.25);
+  ring.position.set(pos.x, groundHeight(pos.x, pos.z) + 0.25, pos.z);
   scene.add(ring);
   shockwaves.push({ ring, progress: 0, hit: false });
 }
@@ -497,7 +757,7 @@ function doPlayerHit() {
     burstBlood(e.pos.clone().setY(e.isBoss ? 2.8 : 1.2));
     if (!e.isBoss) {
       e.state = 'stagger'; e.t = 0;
-      e.pos.add(to.normalize().multiplyScalar(1.4));
+      e.pos.add(to.normalize().multiplyScalar(-1.6));
     } else if (e.state === 'guard' || e.state === 'chase') {
       e.state = 'stagger'; e.t = 0;
     }
@@ -557,7 +817,7 @@ function dropRunes(pos, amount) {
     new THREE.OctahedronGeometry(0.28, 0),
     new THREE.MeshStandardMaterial({ color: 0xe6c14a, emissive: 0xc9992a, emissiveIntensity: 1.4, roughness: 0.3 })
   );
-  m.position.copy(pos).setY(0.6);
+  m.position.set(pos.x, groundHeight(pos.x, pos.z) + 0.6, pos.z);
   scene.add(m);
   runeDrops.push({ mesh: m, amount, phase: Math.random() * 6 });
 }
@@ -667,8 +927,17 @@ function animateHumanoid(rig, state, who, t, dt, running) {
     armRx = 0.6 * u; armLx = 0.6 * u;
   }
 
-  group.rotation.set(rollRot, group.rotation.y, 0);
-  group.position.y = bob;
+  let sway = 0, hover = 0, pitch = rollRot;
+  if (rig.wraith) {
+    legSwing = 0;
+    hover = 0.18 + Math.sin(game.time * 2.2 + (who.walkPhase || 0) * 0.1) * 0.07;
+    sway = Math.sin(game.time * 1.7 + (who.walkPhase || 0)) * 0.08;
+    if (state === 'move') hover += Math.abs(Math.sin(w)) * 0.12;
+    if (state === 'strike') pitch += 0.35;
+    if (state === 'windup') pitch -= 0.2;
+  }
+  group.rotation.set(pitch, group.rotation.y, sway);
+  group.position.y = (rig.baseY || 0) + bob + hover;
   armL.rotation.x = lerp(armL.rotation.x, armLx, clamp(18 * dt, 0, 1));
   armR.rotation.x = lerp(armR.rotation.x, armRx, clamp(22 * dt, 0, 1));
   legL.rotation.x = lerp(legL.rotation.x, legSwing, clamp(16 * dt, 0, 1));
@@ -754,9 +1023,16 @@ function updatePlayer(dt) {
     }
   }
 
-  p.rig.group.position.copy(p.pos);
+  const gY = groundHeight(p.pos.x, p.pos.z);
+  p.rig.baseY = gY;
+  p.rig.group.position.set(p.pos.x, gY, p.pos.z);
   p.rig.group.rotation.y = p.yaw;
   animateHumanoid(p.rig, p.state, p, p.t, dt, p.runInput);
+
+  if (!desertSeen && p.pos.x > 108 && Math.abs(p.pos.z) < 26) {
+    desertSeen = true;
+    subtitle('Désert de Cendres — le vent porte la poussière des morts.', 5200);
+  }
   attackQueued = false;
 }
 
@@ -773,7 +1049,8 @@ function updateEnemy(e, dt) {
   e.t += dt;
   if (e.state === 'dead') {
     animateHumanoid(e.rig, 'dead', e, e.t, dt, false);
-    e.rig.group.position.copy(e.pos);
+    e.rig.baseY = groundHeight(e.pos.x, e.pos.z);
+    e.rig.group.position.set(e.pos.x, e.rig.baseY, e.pos.z);
     e.rig.group.rotation.y = e.yaw;
     return;
   }
@@ -824,10 +1101,14 @@ function updateEnemy(e, dt) {
       e.yaw = lerpAngle(e.yaw, toPlayerAng, clamp((isBoss ? 2.2 : 2.8) * dt, 0, 1));
       animateHumanoid(e.rig, 'windup', e, e.t, dt, false);
       const windup = isBoss ? (e.moveName === 'slam' ? 0.85 : 0.7) : e.atkWindup;
-      if (e.t >= windup) { e.state = 'strike'; e.t = 0; }
+      if (e.t >= windup) { e.state = 'strike'; e.t = 0; e.lungeDir = null; }
       break;
     }
     case 'strike': {
+      if (e.wraith) {
+        if (!e.lungeDir) e.lungeDir = player.pos.clone().sub(e.pos).setY(0).normalize().multiplyScalar(17);
+        e.pos.addScaledVector(e.lungeDir, dt);
+      }
       animateHumanoid(e.rig, 'strike', e, e.t, dt, false);
       if (!e.hitDone && e.t > 0.1) {
         e.hitDone = true;
@@ -870,7 +1151,8 @@ function updateEnemy(e, dt) {
   const r = Math.hypot(e.pos.x, e.pos.z);
   if (r > WORLD_RADIUS) { e.pos.x *= WORLD_RADIUS / r; e.pos.z *= WORLD_RADIUS / r; }
 
-  e.rig.group.position.copy(e.pos);
+  e.rig.baseY = groundHeight(e.pos.x, e.pos.z);
+  e.rig.group.position.set(e.pos.x, e.rig.baseY, e.pos.z);
   e.rig.group.rotation.y = e.yaw;
 
   if (isBoss && bossEngaged && !wasDead) {
@@ -911,7 +1193,7 @@ function updateCamera(dt) {
     lockTarget = null;
   }
 
-  const focus = player.pos.clone().add(new THREE.Vector3(0, 1.7, 0));
+  const focus = new THREE.Vector3(player.pos.x, groundHeight(player.pos.x, player.pos.z) + 1.7, player.pos.z);
   const dist = lockTarget ? 6.4 : camDist;
   const off = new THREE.Vector3(
     Math.sin(camYawV) * Math.cos(camPitchV),
@@ -987,7 +1269,7 @@ function updatePickups(dt) {
   for (let i = runeDrops.length - 1; i >= 0; i--) {
     const r = runeDrops[i];
     r.phase += dt * 3;
-    r.mesh.position.y = 0.6 + Math.sin(r.phase) * 0.12;
+    r.mesh.position.y = groundHeight(r.mesh.position.x, r.mesh.position.z) + 0.6 + Math.sin(r.phase) * 0.12;
     r.mesh.rotation.y += dt * 2;
     if (player.pos.distanceTo(r.mesh.position) < 2.2 && !playerDead()) {
       player.runes += r.amount;
@@ -1028,6 +1310,27 @@ function loop() {
     bonfireFlame.scale.y = 1 + Math.sin(game.time * 11) * 0.14 + Math.sin(game.time * 23) * 0.06;
     bonfireFlame.rotation.y += dt * 2;
     bonfireLight.intensity = 26 + Math.sin(game.time * 9) * 4;
+
+    const zoneT = clamp((player.pos.x - DESERT_X + 6) / 30, 0, 1);
+    scene.fog.color.copy(fogGreen).lerp(fogAsh, zoneT);
+    scene.background.copy(scene.fog.color);
+    Sound.setWindLevel(lerp(0.015, 0.06, zoneT));
+
+    for (const b of braziers) {
+      b.fire.scale.y = 1 + Math.sin(game.time * 13 + b.phase) * 0.2;
+      b.fire.rotation.y += dt * 3;
+      b.lit.intensity = 28 + Math.sin(game.time * 11 + b.phase) * 5;
+    }
+
+    if (ashFall) {
+      const af = ashFall;
+      for (let i = 0; i < af.N; i++) {
+        af.positions[i * 3 + 1] -= dt * (1.1 + ashSeeds[i]);
+        af.positions[i * 3] += Math.sin(game.time * 0.8 + ashSeeds[i] * 20) * 0.6 * dt;
+        if (af.positions[i * 3 + 1] < 0.2) af.positions[i * 3 + 1] = 12 + Math.random() * 4;
+      }
+      af.pts.geometry.attributes.position.needsUpdate = true;
+    }
 
     if (fireflies) {
       const { pts, positions, seeds, N } = fireflies;
@@ -1106,10 +1409,14 @@ addEventListener('contextmenu', (e) => e.preventDefault());
 /* ---------------- démarrage ---------------- */
 buildTerrain();
 buildErdtree();
+buildSky();
+buildGrass();
 buildBossArena();
 buildRuins();
 buildBonfire();
 buildFireflies();
+buildDesert();
+buildAsh();
 
 player.rig = makeHumanoid({
   scale: 1.02, body: 0x59616e, accent: 0x2c2f36, weaponLen: 1.05, eyeColor: 0x9ad1ff,
@@ -1121,11 +1428,16 @@ spawnSoldier(-20, -30, 2.2);
 spawnSoldier(26, -44, -1.1);
 spawnSoldier(-8, -60, 0.3);
 spawnSoldier(16, -62, -0.4);
+spawnWraith(140, 22);
+spawnWraith(158, -30);
+spawnWraith(168, 48);
+spawnWraith(192, 6);
 boss = spawnBoss();
 updateHud();
 
 document.getElementById('start-btn').addEventListener('click', () => {
   Sound.init();
+  Sound.startWind();
   document.getElementById('title-screen').style.display = 'none';
   game.state = 'playing';
   canvas.requestPointerLock();

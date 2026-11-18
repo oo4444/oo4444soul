@@ -47,6 +47,14 @@ Puis ouvrir http://localhost:8000
 - **Runes** : les ennemis vaincus en lâchent. À ta mort, elles sont lâchées sur place… retourne les chercher.
 - **Feu de camp** : `E` pour restaurer la vie, la fiole… et faire renaître les ennemis.
 - **Le boss** : la Sentinelle Déchue veille au nord, dans son cercle de piliers. Écrasement avec onde de choc, balances à 360°. Que la grâce te guide.
+- **Zone 2 — Désert de Cendres** (a l'est) : franchissez le col de pierre gardé par ses braseros pour entrer dans les dunes de cendre. Arbres calcinés, ossements, lames plantées, craquements de braises, chute de cendres permanente, et les **Spectres des cendres** qui fondent sur vous en bond. Au fond, l'Autel de l'Anneau brisé rayonne d'or.
+
+## Graphismes
+
+- Ciel procédural : dôme dégradé nuit, 500 étoiles, lune auréolée
+- Relief réel : les personnages épousent collines et dunes (fonction de hauteur partagée)
+- Brume qui se teinte de mauve en entrant dans le désert, vent ambiant en WebAudio
+- Herbes hautes instanciées dans la lande, lucioles dorées, halo de l'Arbre-Monde
 
 ## Technique
 
